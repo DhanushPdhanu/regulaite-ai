@@ -1,0 +1,40 @@
+# ── Core server (Shashank) ────────────────────────────────────
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.9
+python-dotenv==1.0.1
+httpx==0.27.2
+requests==2.32.3
+
+# ── PDF parsing (Shashank) ────────────────────────────────────
+PyMuPDF==1.24.11
+
+# ── Word export (Shashank) ────────────────────────────────────
+python-docx==1.1.2
+
+# ── Supabase (Shashank) ───────────────────────────────────────
+supabase==2.7.4
+
+# ── Frontend (Dhanush) ────────────────────────────────────────
+streamlit==1.33.0
+plotly==5.21.0
+pandas==2.2.2
+
+# ── AI Core / RAG (Ullas) ─────────────────────────────────────
+pydantic>=2.4.2
+networkx==3.3
+z3-solver==4.13.0
+sentence-transformers==2.7.0
+qdrant-client==1.9.0
+numpy==1.26.4
+aiofiles==23.2.1
+
+# ── CrewAI agents (Punith) ────────────────────────────────────
+crewai==0.80.0
+crewai-tools==0.17.0
+anthropic==0.40.0
+langchain-anthropic==0.3.0
+
+# ── Misc ──────────────────────────────────────────────────────
+pytesseract==0.3.10
+fpdf2==2.7.9

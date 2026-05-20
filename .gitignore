@@ -1,0 +1,62 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# ── Virtual environments ──────────────────────────────────────
+.venv/
+.venv311/
+venv/
+env/
+ENV/
+
+# ── Environment / Secrets ─────────────────────────────────────
+.env
+# .env.example is safe to commit — it has no real secrets
+
+# ── IDE / Editor ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Test / Coverage ───────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── Generated output ──────────────────────────────────────────
+redline_output.docx
+/tmp/redline_*.docx
+# Note: *.docx excluded — generated redline files should not be committed
+*.docx
+
+# ── Logs directory (created by run_local.sh) ──────────────────
+logs/
+
+# ── Qdrant local data ─────────────────────────────────────────
+qdrant_storage/
+qdrant_data/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+/tmp/regulaite_*.log
+/tmp/regulaite_*.pid
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+desktop.ini
