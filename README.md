@@ -35,38 +35,80 @@ RegulAIte catches all of these automatically.
 
 ---
 
-## Architecture Overview
+## Project Structure
 
 ```
-PDF Upload (Dhanush's UI)
+regulaite/
+│
+├── frontend/                    ← LAYER 1: UI (Dhanush)
+│   ├── app.py                   ← Streamlit web app (reference copy)
+│   └── README.md
+│
+├── backend/                     ← LAYER 2: API + Parsing + Export (Shashank)
+│   ├── server.py                ← FastAPI REST server (reference copy)
+│   ├── ingestion/
+│   │   └── parser.py            ← PDF clause extractor
+│   ├── export/
+│   │   └── redline.py           ← Word document generator
+│   └── README.md
+│
+├── ai_orchestration/            ← LAYER 3: AI Agents (Punith)
+│   ├── agents/
+│   │   └── crew.py              ← CrewAI 3-agent pipeline
+│   └── README.md
+│
+├── logic/                       ← LAYER 4: Formal Logic (Ullas)
+│   ├── validator.py             ← Z3 SMT contradiction detector
+│   └── README.md
+│
+├── memory/                      ← LAYER 5: RAG + Vector Search (Ullas)
+│   ├── rag.py                   ← SentenceTransformers + Qdrant/InMemoryRAG
+│   ├── bridge.py                ← CrewAI tool wrappers + plain functions
+│   ├── reset_between_docs.py    ← State reset between analyses
+│   └── README.md
+│
+├── schemas.py                   ← Shared data contracts (Ullas) — used by ALL layers
+├── contracts/                   ← 18 demo PDF contracts
+├── tests/                       ← Unit + integration tests
+│
+│   ── Entry points (run from root) ──
+├── app.py                       ← `streamlit run app.py`
+├── server.py                    ← `python server.py`
+├── requirements.txt
+├── .env.example
+└── .gitignore
+```
+
+> **Note:** `frontend/`, `backend/`, `ai_orchestration/` contain reference copies of the
+> source files for documentation clarity. The **live entry points** (`app.py`, `server.py`)
+> remain at the project root so all relative imports resolve correctly.
+
+## Architecture Flow
+
+```
+PDF Upload (Dhanush — frontend/app.py)
+        │  HTTP POST /upload
+        ▼
+backend/server.py  POST /upload
+        │  calls
+        ▼
+backend/ingestion/parser.py     ← PyMuPDF + regex + heuristic scoring
+        │  returns List[Clause]
+        ▼
+backend/server.py  POST /analyse
+        │  calls
+        ├──► memory/bridge.py   ← Z3 contradictions + RAG citation check (Ullas)
+        │         └── logic/validator.py  ← Z3 SMT solver
+        │         └── memory/rag.py       ← SentenceTransformers + Qdrant
+        │
+        └──► ai_orchestration/agents/crew.py  ← CrewAI pipeline (Punith)
+                   RiskAgent → ComplianceAgent → FixerAgent
         │
         ▼
-POST /upload  ──►  ingestion/parser.py        (Shashank)
-                   - PyMuPDF extracts raw text
-                   - Regex segments into numbered clauses
-                   - Heuristic risk scoring (RISK_RULES)
-                   - Returns List[Clause]
+backend/server.py  _merge_results()   ← unified AnalysisResult
         │
-        ▼
-POST /analyse ──►  memory/bridge.py           (Ullas)
-                   - Indexes clauses into RAG vector store
-                   - Z3 SMT solver detects contradictions
-                   - RAG verifies every agent claim
-                   │
-                   ▼
-               agents/crew.py                 (Punith)
-                   - RiskAgent: LLM scores each clause 0-100
-                   - ComplianceAgent: finds law violations
-                   - FixerAgent: rewrites flagged clauses
-                   │
-                   ▼
-               server.py _merge_results()     (Shashank)
-                   - Merges bridge + agent outputs
-                   - Produces unified AnalysisResult
-        │
-        ├──► GET /results/{doc_id}  ──►  app.py Risk Dashboard  (Dhanush)
-        └──► GET /export/{doc_id}   ──►  export/redline.py       (Shashank)
-                                         - Generates .docx with tracked changes
+        ├──► GET /results/{doc_id}  ──►  frontend/app.py Risk Dashboard
+        └──► GET /export/{doc_id}   ──►  backend/export/redline.py → .docx
 ```
 
 ---
