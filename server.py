@@ -33,6 +33,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Set HuggingFace offline mode BEFORE any sentence_transformers import ──────
+# This forces the model to load from local cache (~/.cache/huggingface/hub/)
+# and prevents SSL certificate errors on corporate/restricted networks.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,

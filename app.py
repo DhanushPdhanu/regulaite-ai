@@ -15,6 +15,10 @@ import math
 import threading
 import itertools
 
+# ── Force HuggingFace offline mode before any ML imports ─────────────────────
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # ── Page config — MUST be first Streamlit call ────────────────────────────────
 st.set_page_config(
     page_title="RegulAIte — AI Legal Intelligence",

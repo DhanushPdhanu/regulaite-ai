@@ -1923,17 +1923,24 @@ def analyse(clauses: List[Clause]) -> dict:
 
     This function is intentionally stub-safe:
     if the LLM call fails (no API key, rate limit, network error),
-    it returns empty lists so the rest of the pipeline is unaffected.
+    it falls back to the deterministic pre-scoring + legal citation engines.
     """
     if not clauses:
         return {"compliance_violations": [], "fixed_clauses": []}
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    stub_mode = not api_key or api_key in ("stub", "your_anthropic_api_key_here", "")
+
+    if stub_mode:
+        print("[CrewAI] No valid API key — running deterministic engines only.")
+        return _stub_result(clauses)
 
     clauses_text = _serialise_clauses(clauses)
 
     try:
         return _run_crew(clauses, clauses_text)
     except Exception as e:
-        print(f"[CrewAI] Pipeline error: {e}. Returning stub result.")
+        print(f"[CrewAI] Pipeline error: {e}. Falling back to deterministic result.")
         return _stub_result(clauses)
 
 
@@ -1978,7 +1985,7 @@ def _run_crew(clauses: List[Clause], clauses_text: str) -> dict:
     risk_task  = _make_risk_task(risk_agent, clauses_text, pre_scores)
     risk_crew  = Crew(
         agents=[risk_agent], tasks=[risk_task],
-        process=Process.sequential, verbose=True,
+        process=Process.sequential, verbose=False,
     )
     risk_output = risk_crew.kickoff()
     llm_scores  = _parse_json_output(str(risk_output) if risk_output else "[]")
@@ -2004,7 +2011,7 @@ def _run_crew(clauses: List[Clause], clauses_text: str) -> dict:
     )
     compliance_crew = Crew(
         agents=[compliance_agent], tasks=[compliance_task],
-        process=Process.sequential, verbose=True,
+        process=Process.sequential, verbose=False,
     )
     compliance_output = compliance_crew.kickoff()
     llm_violations    = _parse_json_output(
@@ -2031,7 +2038,7 @@ def _run_crew(clauses: List[Clause], clauses_text: str) -> dict:
         )
         fixer_crew = Crew(
             agents=[fixer_agent], tasks=[fixer_task],
-            process=Process.sequential, verbose=True,
+            process=Process.sequential, verbose=False,
         )
         fixer_output = fixer_crew.kickoff()
         llm_fixes    = _parse_json_output(
@@ -2051,26 +2058,37 @@ def _run_crew(clauses: List[Clause], clauses_text: str) -> dict:
 
 
 def _stub_result(clauses: List[Clause]) -> dict:
-    """Returns a deterministic stub result when the LLM pipeline fails.
-    Ensures Shashank's merge and Dhanush's dashboard never crash."""
+    """Returns a deterministic result using pre-scoring + legal citation engines.
+    Called when the LLM pipeline fails (no API key, rate limit, network error).
+    Ensures Shashank's merge and Dhanush's dashboard always get real data."""
+    if not clauses:
+        return {"compliance_violations": [], "fixed_clauses": []}
+
+    # Run deterministic engines — these never need an API key
+    pre_scores = pre_score_all_clauses(clauses)
+    det_violations = detect_legal_violations(clauses, pre_scores)
+    template_rewrites = apply_rewrite_templates_all(
+        clauses,
+        {cid: {"risk_score": d["base_score"]} for cid, d in pre_scores.items()}
+    )
+    final_fixes = strip_internal_metadata(
+        merge_fixed_clauses([], template_rewrites, clauses)
+    )
+
+    # Format violations to match Shashank's expected schema
+    formatted_violations = [
+        {
+            "clause_id":      v.get("clause_id", ""),
+            "violation_type": v.get("violation_type", "UNKNOWN"),
+            "description":    v.get("description", ""),
+            "severity":       v.get("severity", "MEDIUM"),
+        }
+        for v in det_violations
+    ]
+
     return {
-        "compliance_violations": [
-            {
-                "clause_id":      clauses[0].clause_id if clauses else "clause_1_1",
-                "violation_type": "GDPR_VIOLATION",
-                "description":    "[STUB] Data sharing clause detected — full analysis requires API key.",
-                "severity":       "HIGH",
-                "legal_ref":      "GDPR Art. 6(1)",
-            }
-        ] if clauses else [],
-        "fixed_clauses": [
-            {
-                "clause_id":      clauses[0].clause_id if clauses else "clause_1_1",
-                "original_text":  clauses[0].text if clauses else "",
-                "fixed_text":     "[STUB] Rewritten clause — full fix requires API key.",
-                "fix_explanation":"[STUB] Placeholder — run with valid ANTHROPIC_API_KEY.",
-            }
-        ] if clauses else [],
+        "compliance_violations": formatted_violations,
+        "fixed_clauses":         final_fixes,
     }
 
 

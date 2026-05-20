@@ -3,6 +3,11 @@ import uuid
 import hashlib
 import sys
 
+# Force HuggingFace to use local cache — prevents SSL errors on corporate networks
+# The model (all-MiniLM-L6-v2) is cached in ~/.cache/huggingface/hub/
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 # Ensure regulaite/ root is on sys.path for `from schemas import ...`
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
