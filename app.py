@@ -3,7 +3,98 @@ import streamlit as st
 import time
 import textwrap
 import difflib
-from mock_data import risk_data, loophole_logs, logic_conflicts, auto_fixes
+import requests
+import json
+
+BACKEND_URL = "http://localhost:8000"
+
+# ── Backend helpers ───────────────────────────────────────────────────────────
+def call_backend_analyse(uploaded_file) -> dict:
+    """POST the PDF to the FastAPI backend and return parsed JSON."""
+    try:
+        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+        resp = requests.post(f"{BACKEND_URL}/analyse", files=files, timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        st.error(f"Cannot connect to backend at {BACKEND_URL}. Make sure the FastAPI server is running.")
+        return None
+    except requests.exceptions.Timeout:
+        st.error("Backend timed out (>120s). The contract may be too large.")
+        return None
+    except Exception as exc:
+        st.error(f"Backend error: {exc}")
+        return None
+
+def call_backend_demo() -> dict:
+    """Fetch demo analysis from the backend."""
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/analyse/json",
+            json={"text": (
+                "SAMPLE NDA AGREEMENT\n\n"
+                "1. INDEMNIFICATION\nVendor agrees to indemnify, defend, and hold harmless the Client "
+                "from and against any and all claims, losses, liabilities, damages, expenses, and costs "
+                "arising out of or related to the Vendor's performance under this Agreement, regardless of fault.\n\n"
+                "2. DATA RETENTION\nAll confidential data must be permanently destroyed within thirty (30) days "
+                "of contract termination.\n\n"
+                "3. DATA BACKUP\nVendor shall retain complete backups of all transactional data for a minimum "
+                "period of three (3) years to ensure compliance with applicable financial regulations.\n\n"
+                "4. TERMINATION\nClient may terminate this Agreement at any time for any reason upon five (5) "
+                "days written notice, whereas Vendor may only terminate upon a material breach remaining uncured "
+                "for sixty (60) days following written notice.\n\n"
+                "5. LIABILITY CAP\nUnder no circumstances shall Client aggregate liability exceed the total amount "
+                "paid by Client to Vendor in the one (1) month preceding the event. No equivalent cap is placed "
+                "upon Vendor liability.\n\n"
+                "6. INTELLECTUAL PROPERTY\nAll work product, inventions, discoveries, and improvements conceived "
+                "or developed by Vendor, whether or not during working hours and whether or not using Client "
+                "resources, shall be deemed works made for hire and shall be the exclusive property of Client.\n\n"
+                "7. GOVERNING LAW\nThis Agreement shall be governed by the laws of the State of Delaware.\n\n"
+                "8. DISPUTE RESOLUTION\nAny disputes arising hereunder shall be submitted to binding arbitration "
+                "in San Francisco, California, under the JAMS arbitration rules.\n\n"
+                "9. PAYMENT TERMS\nAll invoices are payable within forty-five (45) days of receipt (Net 45).\n\n"
+                "10. NON-COMPETE\nVendor agrees not to compete with Client in any capacity for a period of "
+                "five (5) years following termination, in any jurisdiction worldwide."
+            )},
+            timeout=120
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return None
+
+def _build_mock_fallback():
+    """Return mock data when backend is unreachable (for demo mode only)."""
+    from mock_data import risk_data as _rd, loophole_logs as _ll, logic_conflicts as _lc, auto_fixes as _af
+    return _rd, _ll, _lc, _af
+
+def _parse_backend_response(data: dict):
+    """
+    Convert the backend JSON response into the four variables app.py expects:
+    risk_data, loophole_logs, logic_conflicts, auto_fixes
+    """
+    risk_data = {
+        "score":               data.get("score", 50),
+        "verdict":             data.get("verdict", "Medium Risk"),
+        "summary":             data.get("summary", ""),
+        "pages_analyzed":      data.get("pages_analyzed", 1),
+        "pages_trend":         data.get("pages_trend", "+0 pages"),
+        "relevant_precedents": data.get("relevant_precedents", 5),
+        "precedents_trend":    data.get("precedents_trend", "+0 cases"),
+        "identified_risks":    data.get("identified_risks", 0),
+        "risks_trend":         data.get("risks_trend", "+0 this week"),
+        "ai_confidence":       data.get("ai_confidence", "85%"),
+        "confidence_trend":    data.get("confidence_trend", "+0%"),
+        "risk_zone":           data.get("risk_zone", "Medium 2.0"),
+        "analyzed_date":       data.get("analyzed_date", ""),
+        "last_edited":         data.get("last_edited", "AI Pipeline"),
+        "filename":            data.get("filename", "Contract.pdf"),
+        "red_flags":           data.get("red_flags", []),
+    }
+    loophole_logs  = data.get("loophole_logs", [])
+    logic_conflicts = data.get("logic_conflicts", [])
+    auto_fixes     = data.get("auto_fixes", [])
+    return risk_data, loophole_logs, logic_conflicts, auto_fixes
 
 # ── Page Configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -1136,16 +1227,19 @@ with st.sidebar:
         st.session_state['file_uploaded'] = True
         st.session_state['demo_mode'] = False
         st.session_state['filename'] = uploaded_file.name
-        with st.spinner("🤖 Agents analyzing contract..."):
-            time.sleep(3)
-        st.session_state['analysis_complete'] = True
-        # Set query parameters to preserve upload state
-        st.query_params.update({
-            "page": "Dashboard",
-            "analyzed": "true",
-            "filename": uploaded_file.name
-        })
-        st.rerun()
+        with st.spinner("🤖 AI agents analysing contract via backend..."):
+            ai_result = call_backend_analyse(uploaded_file)
+        if ai_result:
+            st.session_state['ai_data'] = ai_result
+            st.session_state['analysis_complete'] = True
+            st.query_params.update({
+                "page": "Dashboard",
+                "analyzed": "true",
+                "filename": uploaded_file.name
+            })
+            st.rerun()
+        else:
+            st.session_state['file_uploaded'] = False
 
     # Load Demo Analysis button
     if not st.session_state['analysis_complete']:
@@ -1153,10 +1247,20 @@ with st.sidebar:
         if st.button("🎯 Load Demo Analysis", use_container_width=True, type="primary"):
             st.session_state['demo_mode'] = True
             st.session_state['filename'] = "NDA_v3.2_Draft.pdf"
-            with st.spinner("🤖 Agents analyzing contract..."):
-                time.sleep(2)
+            with st.spinner("🤖 AI agents analysing demo contract..."):
+                demo_result = call_backend_demo()
+            if demo_result:
+                st.session_state['ai_data'] = demo_result
+            else:
+                # Backend unreachable — fall back to mock data
+                from mock_data import risk_data as _rd, loophole_logs as _ll, logic_conflicts as _lc, auto_fixes as _af
+                st.session_state['ai_data'] = {
+                    **_rd,
+                    "loophole_logs": _ll,
+                    "logic_conflicts": _lc,
+                    "auto_fixes": _af,
+                }
             st.session_state['analysis_complete'] = True
-            # Set query parameters to preserve demo loaded state
             st.query_params.update({
                 "page": "Dashboard",
                 "demo": "true",
@@ -1198,6 +1302,13 @@ if not st.session_state['analysis_complete']:
     """)
 
 else:
+    # ── Resolve data from backend response or mock fallback ───────────────
+    _raw = st.session_state.get('ai_data')
+    if _raw:
+        risk_data, loophole_logs, logic_conflicts, auto_fixes = _parse_backend_response(_raw)
+    else:
+        risk_data, loophole_logs, logic_conflicts, auto_fixes = _build_mock_fallback()
+
     # Common variables globally available inside all subpages to avoid Scope / NameErrors
     fn = st.session_state.get('filename', 'NDA_v3.2_Draft.pdf')
     demo_mode = st.session_state.get('demo_mode', False)
@@ -1725,6 +1836,87 @@ else:
             </div>
             """
             render_html(glass_controls_html)
+
+            # ── AI Auto-Fix Suggestions from backend pipeline ─────────────────
+            st.markdown(
+                "<h2 style='font-size:1.1rem;font-weight:700;color:#111827;"
+                "margin-top:0.5rem;margin-bottom:1rem;'>"
+                "🤖 AI Auto-Fix Suggestions <span style='font-size:0.75rem;font-weight:500;"
+                "color:#6b7280;'>(generated by the AI pipeline for your contract)</span></h2>",
+                unsafe_allow_html=True
+            )
+
+            if not auto_fixes:
+                st.info("No auto-fix suggestions yet. Upload a contract or load the demo to generate AI-powered fixes.")
+            else:
+                _risk_colors = {
+                    "critical": ("#fef2f2", "#dc2626", "#fca5a5", "🔴"),
+                    "high":     ("#fffbeb", "#d97706", "#fcd34d", "🟠"),
+                    "medium":   ("#eff6ff", "#2563eb", "#bfdbfe", "🟡"),
+                    "low":      ("#f0fdf4", "#16a34a", "#86efac", "🟢"),
+                }
+
+                for i, fix in enumerate(auto_fixes):
+                    rl_key = fix.get("risk_level", "medium").lower()
+                    bg, fg, border, dot = _risk_colors.get(rl_key, _risk_colors["medium"])
+                    issue      = fix.get("issue", f"Issue {i+1}")
+                    original   = fix.get("original", "")
+                    suggested  = fix.get("suggested", "")
+                    rationale  = fix.get("rationale", "")
+                    diff_html  = get_word_diff(original, suggested)
+
+                    with st.expander(f"{dot}  {issue}  ·  {fix.get('risk_level','').upper()} RISK", expanded=(i == 0)):
+                        # Risk badge
+                        render_html(f"""
+                        <div style="margin-bottom:1rem;">
+                            <span style="display:inline-block;background:{bg};color:{fg};
+                                border:1px solid {border};padding:3px 10px;border-radius:12px;
+                                font-size:0.75rem;font-weight:700;">
+                                {dot} {fix.get('risk_level','').title()} Risk
+                            </span>
+                        </div>
+                        """)
+
+                        # Split panes — original vs suggested
+                        col_orig, col_fix = st.columns(2, gap="medium")
+
+                        with col_orig:
+                            st.markdown(
+                                "<div style='font-size:0.72rem;font-weight:700;text-transform:uppercase;"
+                                "color:#9ca3af;letter-spacing:0.06em;margin-bottom:6px;'>📋 Original Clause</div>",
+                                unsafe_allow_html=True
+                            )
+                            st.markdown(
+                                f"<div style='background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;"
+                                f"padding:1rem;font-size:0.85rem;color:#374151;line-height:1.6;"
+                                f"min-height:100px;'>{original}</div>",
+                                unsafe_allow_html=True
+                            )
+
+                        with col_fix:
+                            st.markdown(
+                                "<div style='font-size:0.72rem;font-weight:700;text-transform:uppercase;"
+                                "color:#9ca3af;letter-spacing:0.06em;margin-bottom:6px;'>✨ AI Suggested Fix</div>",
+                                unsafe_allow_html=True
+                            )
+                            render_html(
+                                f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:8px;"
+                                f"padding:1rem;font-size:0.85rem;color:#374151;line-height:1.6;"
+                                f"min-height:100px;'>{diff_html}</div>"
+                            )
+
+                        # Rationale
+                        if rationale:
+                            render_html(f"""
+                            <div style="background:#f5f3ff;border-left:3px solid #8b5cf6;border-radius:8px;
+                                padding:10px 14px;margin-top:0.75rem;">
+                                <div style="font-size:0.72rem;font-weight:700;color:#6d28d9;
+                                    text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">
+                                    💡 Rationale
+                                </div>
+                                <div style="font-size:0.82rem;color:#4c1d95;line-height:1.5;">{rationale}</div>
+                            </div>
+                            """)
 
     # ── Page: Cases (Precedents Database Listing) ─────────────────────────────
     elif current_page == "Cases":

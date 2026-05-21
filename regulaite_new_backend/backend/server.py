@@ -2,20 +2,23 @@
 RegulAIte FastAPI Backend
 =========================
 Accepts PDF uploads or raw contract text, extracts text via PyMuPDF,
-sends it to Claude, and returns structured JSON that the LegalInspect
-Streamlit frontend (mock_data.py shape) can consume directly.
+runs the 5-agent AI orchestration pipeline, and returns structured JSON
+that the LegalInspect Streamlit frontend can consume directly.
 
 Run from the regulaite_new_backend/ folder:
     python backend/server.py
 """
 
 import os
-import io
+import sys
 import json
 import re
 import logging
 from datetime import datetime
 from typing import Optional
+
+# Ensure backend/ is on the path so ai_orchestration imports work
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -33,6 +36,15 @@ MODEL = "claude-sonnet-4-20250514"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger("regulaite")
+
+# ── Import AI orchestration pipeline ──────────────────────────────────────────
+try:
+    from ai_orchestration.pipeline import run_pipeline, get_stored_clauses
+    PIPELINE_AVAILABLE = True
+    log.info("AI orchestration pipeline loaded successfully.")
+except ImportError as _e:
+    PIPELINE_AVAILABLE = False
+    log.warning(f"AI orchestration pipeline not available: {_e}. Falling back to single Claude call.")
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(title="RegulAIte Backend", version="1.0.0")
@@ -385,7 +397,56 @@ def normalise_result(result: dict, filename: str) -> dict:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": MODEL, "api_key_set": bool(ANTHROPIC_API_KEY)}
+    return {
+        "status": "ok",
+        "model": MODEL,
+        "api_key_set": bool(ANTHROPIC_API_KEY),
+        "pipeline": "ai_orchestration" if PIPELINE_AVAILABLE else "single_claude_call",
+    }
+
+
+@app.get("/clauses")
+async def get_clauses():
+    """
+    Returns the clauses from the last analysed contract.
+    Useful for inspecting what the AI orchestration pipeline extracted and stored.
+    """
+    if not PIPELINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="AI orchestration pipeline not available.")
+    stored = get_stored_clauses()
+    if not stored:
+        return JSONResponse(content={"message": "No contract analysed yet.", "clauses": []})
+    return JSONResponse(content={
+        "filename": stored.get("filename", ""),
+        "analyzed_at": stored.get("analyzed_at", ""),
+        "clause_count": stored.get("clause_count", 0),
+        "jurisdiction": stored.get("jurisdiction", ""),
+        "overall_risk": stored.get("overall_risk", 0),
+        "clauses": stored.get("clauses", []),
+    })
+
+
+async def _run_analysis(contract_text: str, filename: str) -> dict:
+    """
+    Central analysis function — uses AI orchestration pipeline if available,
+    falls back to single Claude call, then stub.
+    """
+    if PIPELINE_AVAILABLE:
+        log.info("Using AI orchestration pipeline.")
+        try:
+            result = await run_pipeline(contract_text, ANTHROPIC_API_KEY, filename)
+            return result
+        except Exception as exc:
+            log.error(f"Pipeline failed: {exc} — falling back to single Claude call.")
+
+    # Fallback: single Claude call
+    log.info("Using single Claude call (pipeline unavailable or failed).")
+    result = call_claude(contract_text)
+    if result is None:
+        result = stub_result(filename)
+    else:
+        result = normalise_result(result, filename)
+    return result
 
 
 @app.post("/analyse")
@@ -397,12 +458,11 @@ async def analyse(
     Accepts either:
       - multipart/form-data with field 'file' (PDF)
       - multipart/form-data with field 'text' (raw contract text)
-    Returns structured JSON analysis.
+    Runs the full AI orchestration pipeline and returns structured JSON.
     """
     contract_text: str = ""
     filename: str = "Contract.pdf"
 
-    # ── Determine input source ─────────────────────────────────────────────
     if file is not None and file.filename:
         filename = file.filename
         pdf_bytes = await file.read()
@@ -429,13 +489,7 @@ async def analyse(
             detail="Contract text is too short to analyse (minimum 50 characters).",
         )
 
-    # ── Call Claude (or return stub) ───────────────────────────────────────
-    result = call_claude(contract_text)
-    if result is None:
-        result = stub_result(filename)
-    else:
-        result = normalise_result(result, filename)
-
+    result = await _run_analysis(contract_text, filename)
     return JSONResponse(content=result)
 
 
@@ -454,11 +508,7 @@ async def analyse_json(body: TextRequest):
             detail="Contract text is too short to analyse (minimum 50 characters).",
         )
     log.info(f"Received JSON text input: {len(contract_text)} chars")
-    result = call_claude(contract_text)
-    if result is None:
-        result = stub_result("PastedContract.txt")
-    else:
-        result = normalise_result(result, "PastedContract.txt")
+    result = await _run_analysis(contract_text, "PastedContract.txt")
     return JSONResponse(content=result)
 
 
